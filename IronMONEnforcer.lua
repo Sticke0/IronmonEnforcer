@@ -1,11 +1,16 @@
-local function IronMONEnforcer()
+local customCodeFolder = FileManager.getCustomFolderPath() .. "\\IronmonEnforcer\\"
+local utils = dofile(customCodeFolder .. "Utils.lua")
+local CONSTANT = dofile(customCodeFolder .. "Constants.lua")
+local CustomDisplay = dofile(customCodeFolder .. "Display.lua")
+
+local function IronmonEnforcer()
 	-- Define descriptive attributes of the custom extension that are displayed on the Tracker settings
 	local self = {}
-	self.version = "0.1"
-	self.name = "IronMON Enforcer"
+	self.version = "0.3"
+	self.name = "Ironmon Enforcer"
 	self.author = "Sticke"
-	self.description = "Enforces the IronMON rules depending on which version you want to play"
-	self.github = "Sticke0/IronMONEnforcer"
+	self.description = "Enforces the Ironmon rules depending on which version you want to play"
+	self.github = "Sticke0/IronmonEnforcer"
 	self.url = string.format("https://github.com/%s", self.github or "") -- Remove this attribute if no host website available for this extension
 
 	self.highestLevel = 0
@@ -16,50 +21,21 @@ local function IronMONEnforcer()
 	self.caughtPokemonCount = 0
 	self.hasHMSlave = false
 	self.shouldTrackBattle = false
+	self.hasUsedTM = {}
+	self.mustPivot = false
+	self.allowedToLeaveArea = true
+	self.startedWithoutItem = false
+	self.mustBeSlave = false
 
-	local VERSION = {
-		STANDARD = 1,
-		ULTIMATE = 2,
-		KAIZO = 3,
-	}
+	self.mode = CONSTANT.VERSION.KAIZO
 
-	self.mode = VERSION.KAIZO
-
-	self.bannedItems = {
-		{ [0xC5] = true, [0x2D] = true }, -- Lucky Egg, Sacred Ash
-		{ [0xC8] = true, [0xBF] = true, [0xC3] = true }, -- Leftovers, Soul Dew, Everstone
-		{ [0x27] = true, [0x28] = true, [0x29] = true, [0x2A] = true, [0x2B] = true }, -- Flutes
-	}
-
-	self.allowedBuy = {
-		-- Balls
-		[0x01] = true,
-		[0x02] = true,
-		[0x03] = true,
-		[0x04] = true,
-		[0x05] = true,
-		[0x06] = true,
-		[0x07] = true,
-		[0x08] = true,
-		[0x09] = true,
-		[0x0A] = true,
-		[0x0B] = true,
-		[0x0C] = true,
-		[0xC2] = true,
-		[0xCA] = true,
-		-- Repels
-		[0x53] = true,
-		[0x54] = true,
-		[0x56] = true,
-	}
-
-	self.heldItemAllowed = {
+	self.isAllowedToHoldItem = {
 		function(itemID)
-			return self.bannedItems[VERSION.STANDARD][itemID] ~= true
+			return CONSTANT.BANNED_ITEMS[CONSTANT.VERSION.STANDARD][itemID] ~= true
 		end,
 		function(itemID)
-			return self.bannedItems[VERSION.STANDARD][itemID] ~= true
-				and self.bannedItems[VERSION.ULTIMATE][itemID] ~= true
+			return CONSTANT.BANNED_ITEMS[CONSTANT.VERSION.STANDARD][itemID] ~= true
+				and CONSTANT.BANNED_ITEMS[CONSTANT.VERSION.ULTIMATE][itemID] ~= true
 		end,
 		function(itemID)
 			-- Allow berries
@@ -95,7 +71,7 @@ local function IronMONEnforcer()
 			end
 
 			if not hasCut then
-				return self.heldItemAllowed[VERSION.KAIZO](itemID)
+				return self.isAllowedToHoldItem[CONSTANT.VERSION.KAIZO](itemID)
 			end
 
 			-- Still ban Lucky Egg and Everstone
@@ -108,247 +84,6 @@ local function IronMONEnforcer()
 	-- Add any number of these below functions to your extension that you want to use.
 	-- If you don't need a function, don't add it at all; leave ommitted for faster code execution.
 	--------------------------------------
-
-	function self.boolToBit(b)
-		if b then
-			return 1
-		end
-		return 0
-	end
-
-	function self.getAreaId()
-		return Battle.CurrentRoute.encounterArea .. "-" .. Program.GameData.mapId
-	end
-
-	function self.getBagItemCount(itemID)
-		local key = Utils.getEncryptionKey(2) -- Want a 16-bit key
-		local saveBlock1Addr = Utils.getSaveBlock1Addr()
-		local address = saveBlock1Addr + GameSettings.bagPocket_Items_offset
-		local size = GameSettings.bagPocket_Items_Size
-
-		for i = 0, (size - 1) do
-			local itemid_and_quantity = Memory.readdword(address + i * 0x4)
-			local itemid = Utils.getbits(itemid_and_quantity, 0, 16)
-
-			if itemid == itemID then
-				local quantity = Utils.getbits(itemid_and_quantity, 16, 16)
-
-				if key ~= nil then
-					quantity = Utils.bit_xor(quantity, key)
-				end
-
-				return quantity
-			end
-		end
-
-		return 0
-	end
-
-	function self.getPCItemCount(itemID)
-		local saveBlock1Addr = Utils.getSaveBlock1Addr()
-		local address = saveBlock1Addr + 0x298
-		local size = 30
-
-		for i = 0, (size - 1) do
-			local itemid_and_quantity = Memory.readdword(address + i * 0x4)
-			local itemid = Utils.getbits(itemid_and_quantity, 0, 16)
-
-			if itemid == itemID then
-				local quantity = Utils.getbits(itemid_and_quantity, 16, 16)
-
-				return quantity
-			end
-		end
-
-		return 0
-	end
-
-	function self.setBagItemCount(itemID, ammount)
-		local key = Utils.getEncryptionKey(2) -- Want a 16-bit key
-		local saveBlock1Addr = Utils.getSaveBlock1Addr()
-		local address = saveBlock1Addr + GameSettings.bagPocket_Items_offset
-		local size = GameSettings.bagPocket_Items_Size
-		local clear = ammount == 0
-
-		if key ~= nil then
-			ammount = Utils.bit_xor(ammount, key)
-		end
-
-		for i = 0, (size - 1) do
-			local itemid_and_quantity = Memory.readdword(address + i * 0x4)
-			local itemid = Utils.getbits(itemid_and_quantity, 0, 16)
-			local quantity = Utils.getbits(itemid_and_quantity, 16, 16)
-
-			if key ~= nil then
-				quantity = Utils.bit_xor(quantity, key)
-			end
-
-			if itemid == 0 or quantity == 0 or itemid == itemID then
-				if clear then
-					itemID = 0
-				end
-				itemid_and_quantity = itemID + (ammount << 16)
-				Memory.writedword(address + i * 0x4, itemid_and_quantity)
-				break
-			end
-		end
-	end
-
-	function self.setPCItemCount(itemID, ammount)
-		local saveBlock1Addr = Utils.getSaveBlock1Addr()
-		local address = saveBlock1Addr + 0x298
-		local size = 30
-		local clear = ammount == 0
-
-		for i = 0, (size - 1) do
-			local itemid_and_quantity = Memory.readdword(address + i * 0x4)
-			local itemid = Utils.getbits(itemid_and_quantity, 0, 16)
-			local quantity = Utils.getbits(itemid_and_quantity, 16, 16)
-
-			if itemid == 0 or quantity == 0 or itemid == itemID then
-				if clear then
-					itemID = 0
-				end
-				itemid_and_quantity = itemID + (ammount << 16)
-				Memory.writedword(address + i * 0x4, itemid_and_quantity)
-				break
-			end
-		end
-	end
-
-	function self.addItemToBag(itemID, ammount)
-		local total = self.getBagItemCount(itemID) + ammount
-		if total < 0 then
-			total = 0
-		end
-
-		self.setBagItemCount(itemID, total)
-	end
-
-	function self.addItemToPC(itemID, ammount)
-		local total = self.getPCItemCount(itemID) + ammount
-		if total < 0 then
-			total = 0
-		end
-
-		self.setPCItemCount(itemID, total)
-	end
-
-	function self.moveItem(itemID, toBag)
-		if toBag == nil then
-			toBag = false
-		end
-
-		if toBag then
-			local itemCount = self.getBagItemCount(itemID) + self.getPCItemCount(itemID)
-			self.setPCItemCount(itemID, 0)
-			self.setBagItemCount(itemID, itemCount)
-		else
-			local itemCount = self.getBagItemCount(itemID) + self.getPCItemCount(itemID)
-			self.setBagItemCount(itemID, 0)
-			self.setPCItemCount(itemID, itemCount)
-		end
-	end
-
-	function self.copyPokemon(source, destination)
-		local addressOffsetSource = 100 * (source - 1)
-		local addressOffsetDestination = 100 * (destination - 1)
-		memory.write_bytes_as_array(
-			GameSettings.pstats + addressOffsetSource,
-			memory.read_bytes_as_array(GameSettings.pstats + addressOffsetDestination, 100)
-		)
-	end
-
-	function self.tagPokemon(t)
-		local index = t.index
-
-		local addressOffset = 100 * (index - 1) + 0x1E
-		local pokemonData = memory.read_u16_le(GameSettings.pstats + addressOffset)
-
-		local isMain = Utils.getbits(pokemonData, 0, 1)
-		local isSlave = Utils.getbits(pokemonData, 1, 1)
-		local isDead = Utils.getbits(pokemonData, 2, 1)
-
-		if t.isMain ~= nil then
-			isMain = self.boolToBit(t.isMain)
-		end
-		if t.isSlave ~= nil then
-			isSlave = self.boolToBit(t.isSlave)
-		end
-		if t.isDead ~= nil then
-			isDead = self.boolToBit(t.isDead)
-		end
-
-		pokemonData = 0
-		pokemonData = pokemonData | (isMain << 0)
-		pokemonData = pokemonData | (isSlave << 1)
-		pokemonData = pokemonData | (isDead << 2)
-
-		memory.write_u16_le(GameSettings.pstats + addressOffset, pokemonData)
-	end
-
-	function self.getPokemonTags(index)
-		local addressOffset = 100 * (index - 1) + 0x1E
-		local pokemonData = memory.read_u16_le(GameSettings.pstats + addressOffset)
-
-		local isMain = Utils.getbits(pokemonData, 0, 1)
-		local isSlave = Utils.getbits(pokemonData, 1, 1)
-		local isDead = Utils.getbits(pokemonData, 2, 1)
-
-		return { isMain = isMain, isSlave = isSlave, isDead = isDead }
-	end
-
-	function self.killPokemon(i)
-		local addressOffset = 100 * (i - 1)
-		local personality = Memory.readdword(GameSettings.pstats + addressOffset)
-		local trainerID = Memory.readdword(GameSettings.pstats + addressOffset + 4)
-
-		if personality ~= 0 or trainerID ~= 0 then
-			local pokemon = Program.readNewPokemon(GameSettings.pstats + addressOffset, personality)
-			if Program.validPokemonData(pokemon) and pokemon.hp > 0 then
-				memory.write_u8(GameSettings.pstats + addressOffset + 0x54, 0x01) -- Level
-				memory.write_u32_le(GameSettings.pstats + addressOffset + 0x56, 0x00000000) -- Max Hp, Current Hp
-				memory.write_u32_le(GameSettings.pstats + addressOffset + 0x5A, 0x00010000) -- Defense, Attack
-				memory.write_u16_le(GameSettings.pstats + addressOffset + 0x5E, 0x0000) -- Speed
-				memory.write_u32_le(GameSettings.pstats + addressOffset + 0x60, 0x00010000) -- Sp. Defense, Sp. Attack
-			end
-
-			self.tagPokemon({ index = i, isDead = true })
-		end
-	end
-
-	function self.setPokemonItem(index, itemID)
-		local addressOffset = 100 * (index - 1)
-		-- Lookup information on the player's Pokemon first
-		local personality = Memory.readdword(GameSettings.pstats + addressOffset)
-		local trainerID = Memory.readdword(GameSettings.pstats + addressOffset + 4)
-
-		local magicword = Utils.bit_xor(personality, trainerID) -- The XOR encryption key for viewing the Pokemon data
-
-		local aux = personality % 24 + 1
-		local growthoffset = (MiscData.TableData.growth[aux] - 1) * 12
-
-		-- Pokemon Data substructure: https://bulbapedia.bulbagarden.net/wiki/Pok%C3%A9mon_data_substructures_(Generation_III)
-		local growth1 =
-			Utils.bit_xor(Memory.readdword(GameSettings.pstats + addressOffset + 0x20 + growthoffset), magicword)
-		local species = Utils.getbits(growth1, 0, 16)
-
-		local itemDifference = itemID - Utils.getbits(growth1, 16, 16)
-
-		growth1 = species | (itemID << 16)
-
-		Memory.writedword(GameSettings.pstats + addressOffset + 0x20 + growthoffset, Utils.bit_xor(growth1, magicword))
-
-		local checksum = memory.read_u16_le(GameSettings.pstats + addressOffset + 0x1C)
-		checksum = checksum + itemDifference
-		if checksum < 0 then
-			checksum = 0xFFFF + checksum
-		elseif checksum > 0xFFFF then
-			checksum = checksum % 0x10000
-		end
-
-		memory.write_u16_le(GameSettings.pstats + addressOffset + 0x1C, checksum)
-	end
 
 	-- Executed when the user clicks the "Check for Updates" button while viewing the extension details within the Tracker's UI
 	-- Returns [true, downloadUrl] if an update is available (downloadUrl auto opens in browser for user); otherwise returns [false, downloadUrl]
@@ -374,50 +109,231 @@ local function IronMONEnforcer()
 
 		self.oldShowRandomBallPicker = Options["Show random ball picker"]
 		Options["Show random ball picker"] = true
+
+		self.replaceShops()
+
+		if self.mode >= CONSTANT.VERSION.KAIZO then
+			self.replaceHealingItemsFieldUse()
+		end
 	end
 
 	-- Executed only once: When the extension is disabled by the user, necessary to undo any customizations, if able
 	function self.unload()
 		Options["Show on new game screen"] = self.oldShowOnNewGameScreen
 		Options["Show random ball picker"] = self.oldShowRandomBallPicker
+
+		self.restoreShops()
+
+		if self.mode >= CONSTANT.VERSION.KAIZO then
+			self.restoreHealingItemsFieldUse()
+		end
+	end
+
+	function self.replaceHealingItemsFieldUse()
+		for itemID, data in pairs(MiscData.HealingItems) do
+			memory.write_u16_le(
+				CONSTANT.gItems + CONSTANT.ITEMSTRUCT_SIZE * itemID + CONSTANT.ITEMSTRUCT_FIELD_USE_FUNCTION_OFFSET,
+				CONSTANT.FieldUseFunc_OakStopsYou
+			)
+		end
+	end
+
+	function self.restoreHealingItemsFieldUse()
+		for itemID, data in pairs(MiscData.HealingItems) do
+			memory.write_u16_le(
+				CONSTANT.gItems + CONSTANT.ITEMSTRUCT_SIZE * itemID + CONSTANT.ITEMSTRUCT_FIELD_USE_FUNCTION_OFFSET,
+				CONSTANT.FieldUseFunc_Medicine
+			)
+		end
+	end
+
+	function self.replaceShop(address)
+		-- Check if shop is already backedup/modified so we don't lose the original (just to be nice)
+		if memory.read_u32_le(address + 0x00E00000) ~= 0xFFFFFFFF then
+			return
+		end
+
+		local offset = 0
+		local items = {
+			allowed = {},
+			banned = {},
+		}
+
+		while true do
+			local itemID = Memory.readword(address + offset)
+			if itemID == 0 then
+				break
+			end
+
+			if CONSTANT.ALLOWED_BUY[itemID] then
+				items.allowed[#items.allowed + 1] = itemID
+			else
+				items.banned[#items.banned + 1] = itemID
+			end
+
+			offset = offset + 2
+		end
+
+		-- Make a backup for if something bad would happen
+		local backup = memory.read_bytes_as_array(address, offset)
+		memory.write_bytes_as_array(address + 0x00E00000, backup)
+
+		offset = 0
+		for _, itemID in pairs(items.allowed) do
+			Memory.writeword(address + offset, itemID)
+			memory.write_u16_le(address + offset, itemID)
+			offset = offset + 2
+		end
+
+		Memory.writeword(address + offset, 0) -- Trick the game into thinking shop ends here
+		memory.write_u16_le(address + offset, 0)
+		offset = offset + 2
+
+		for _, itemID in pairs(items.banned) do
+			Memory.writeword(address + offset, itemID)
+			memory.write_u16_le(address + offset, itemID)
+			offset = offset + 2
+		end
+	end
+
+	function self.restoreShop(address)
+		local backup = memory.read_bytes_as_array(address + 0x00E00000, CONSTANT.SHOP_ADDRESSES[address] * 2)
+		memory.write_bytes_as_array(address, backup)
+
+		for i = 1, #backup, 2 do
+			local itemID = Utils.bit_lshift(backup[i + 1], 8) + backup[i]
+			Memory.writeword(address + i - 1, itemID)
+			memory.write_u16_le(address + i - 1 + 0x00E00000, 0xFFFF)
+		end
+
+		Memory.writeword(address + #backup, 0)
+		memory.write_u16_le(address + #backup, 0)
+	end
+
+	function self.replaceShops()
+		for address, _ in pairs(CONSTANT.SHOP_ADDRESSES) do
+			self.replaceShop(address)
+		end
+	end
+
+	function self.restoreShops()
+		for address, _ in pairs(CONSTANT.SHOP_ADDRESSES) do
+			self.restoreShop(address)
+		end
+	end
+
+	function self.getAreaId()
+		return Battle.CurrentRoute.encounterArea .. "-" .. Program.GameData.mapId
 	end
 
 	-- Executed once every 30 frames, after any battle related data from game memory is read in
 	function self.afterBattleDataUpdate()
 		if not self.allowXP then
-			memory.write_u8(0x02023F4E, 0x00) -- Sets sent in to none, tricks the game into thinking no pokémon are available for XP
+			-- Sets sent in to none, tricks the game into thinking no pokémon are available for XP
+			Memory.writebyte(0x02023F4E, 0x00)
 		end
 
 		-- TODO: Check if has died
 		-- Maybe not needed
 	end
 
+	function self.afterRedraw()
+		if Program.currentScreen == TrackerScreen and not Battle.isViewingOwn then
+			if not self.allowXP then
+				-- Drawing.drawButton(CustomDisplay.Buttons.UncatchableIcon, shadowcolor)
+				Drawing.drawImage(
+					customCodeFolder .. "NoXP.png",
+					Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + 1,
+					6,
+					30,
+					12
+				)
+			end
+
+			if not self.allowCatch then
+				-- Drawing.drawButton(CustomDisplay.Buttons.NoXPIcon, shadowcolor)
+				Drawing.drawImage(
+					customCodeFolder .. "NoCatch.png",
+					Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN + 1,
+					18,
+					30,
+					12
+				)
+			end
+		end
+	end
+
+	function self.isPokemonIDLegal(pokemonID)
+		-- No legendaries
+		if CONSTANT.LEGENDARY_POKEMON[pokemonID] then
+			return false
+		end
+
+		-- Kaizo only after this
+		if self.mode ~= CONSTANT.VERSION.KAIZO then
+			return true
+		end
+
+		local basePokemon = PokemonData.Pokemon[pokemonID]
+
+		-- No 600+ BST Pokemon
+		if basePokemon.bstCalculated >= 600 then
+			return false
+		end
+
+		return true
+	end
+
+	function self.isPokemonLegal(pokemon)
+		if self.mode < CONSTANT.VERSION.KAIZO then
+			return true
+		end
+
+		-- Banned abilities (Huge Power/Pure Power)
+		local basePokemon = PokemonData.Pokemon[pokemon.pokemonID]
+		if basePokemon.bstCalculated >= 400 then
+			local ability = basePokemon.abilities[pokemon.abilityNum]
+			if ability == CONSTANT.ABILITY_HUGE_POWER or ability == CONSTANT.ABILITY_PURE_POWER then
+				return false
+			end
+		end
+
+		return true
+	end
+
 	function self.checkCatchability()
+		-- Must be able to catch when needing to pivot
+		if self.mustPivot then
+			return
+		end
+
 		-- Allows 1 Catch OR Kill
-		local area = TrackerAPI.getMapId()
+		local area = self.getAreaId()
 		if self.hasMadeDecisionPerEncounterArea[area] then
 			self.allowCatch = false
 			return
 		end
 
-		-- Allows for catching current level +4 & No Uber (600+ BST) (Kaizo only)
-		if self.mode == VERSION.KAIZO then
-			local wildPokemon = Tracker.getPokemon(1, false)
+		-- Check legality
+		local wildPokemon = Tracker.getPokemon(1, false)
+		if not self.isPokemonIDLegal(wildPokemon.pokemonID) then
+			self.allowCatch = false
+			return
+		end
+
+		-- Allows for catching current level +4 (Kaizo only)
+		if self.mode == CONSTANT.VERSION.KAIZO then
 			local mainPokemon = Tracker.getPokemon(1, true)
 
-			if
-				wildPokemon.level > mainPokemon.level + 4
-				or PokemonData.Pokemon[wildPokemon.pokemonID].bstCalculated >= 600
-			then
+			if wildPokemon.level > mainPokemon.level + 4 then
 				self.allowCatch = false
 				return
 			end
 		end
 
-		-- Only allow cathing 5 Pokémon for a total of 6
+		-- Only allow cathing 5 Pokémon for a total of 6 (Ultimate & Kaizo only)
 		-- Still allow cathing if you only have 1 pokemon left as safeguard for HM Friends
-		-- Ultimate & Kaizo only
-		if self.mode >= VERSION.ULTIMATE then
+		if self.mode >= CONSTANT.VERSION.ULTIMATE then
 			local partySize = 0
 			for i = 1, 6 do
 				local pokemon = Tracker.getPokemon(i, true, false) or {}
@@ -426,7 +342,13 @@ local function IronMONEnforcer()
 				end
 			end
 
-			if self.caughtPokemonCount > 5 and partySize == 1 then
+			-- if self.caughtPokemonCount > 5 and partySize == 1 then
+			-- 	self.allowCatch = false
+			-- 	return
+			-- end
+
+			if Utils.getGameStat(Constants.GAME_STATS.POKEMON_CAPTURES) > 5 and partySize == 1 then
+				self.mustBeSlave = true
 				self.allowCatch = false
 				return
 			end
@@ -442,7 +364,7 @@ local function IronMONEnforcer()
 		end
 
 		-- No Killing Wild Pokémon (Kaizo only)
-		if self.mode == VERSION.KAIZO then
+		if self.mode == CONSTANT.VERSION.KAIZO then
 			self.allowXP = false
 			return
 		end
@@ -469,73 +391,140 @@ local function IronMONEnforcer()
 		end
 
 		-- Check if Pokémon is holding an allowed item
-		if self.heldItemAllowed[self.mode](mainPokemon.heldItem) then
+		if self.isAllowedToHoldItem[self.mode](mainPokemon.heldItem) then
 			return
 		end
 
 		-- Remove the item from the Pokémon
-		self.addItemToBag(mainPokemon.heldItem, 1)
-		self.setPokemonItem(1, 0)
+		utils.addItemToBag(mainPokemon.heldItem, 1)
+		utils.setPokemonItem(1, 0)
 	end
 
 	function self.moveContraband()
-		local bannedItems = {}
+		-- local bannedItems = {}
 		for i = 1, self.mode do
-			for k, _ in pairs(self.bannedItems[i]) do
-				bannedItems[#bannedItems + 1] = k
+			for itemID, _ in pairs(CONSTANT.BANNED_ITEMS[i]) do
+				-- bannedItems[#bannedItems + 1] = itemID
+				-- local ammount = self.getBagItemCount(itemID)
+				local ammount = utils.getBagItemCount(itemID)
+				if ammount > 0 then
+					utils.moveItem(itemID) -- Moves to PC
+				end
 			end
 		end
 
-		for i = 1, #bannedItems do
-			local itemID = bannedItems[i]
-			local ammount = self.getBagItemCount(itemID)
-			if ammount > 0 then
-				self.moveItem(itemID) -- Moves to PC
-			end
-		end
+		-- for i = 1, #bannedItems do
+		-- 	local itemID = bannedItems[i]
+		-- 	local ammount = self.getBagItemCount(itemID)
+		-- 	if ammount > 0 then
+		-- 		self.moveItem(itemID) -- Moves to PC
+		-- 	end
+		-- end
 	end
 
 	-- Executed after a new battle begins (wild or trainer), and only once per battle
 	function self.afterBattleBegins()
-		-- Only 1 Main (Kaizo only)
-		if self.mode == VERSION.KAIZO then
-			for i = 2, 6 do
-				self.killPokemon(i)
-			end
+		local tutorial_flag = Utils.getbits(Memory.readdword(GameSettings.gBattleTypeFlags), 9, 1) == 1
+		if tutorial_flag then
+			return
 		end
+
+		-- Only 1 Main (Kaizo only)
+		-- Better way to do this
+		-- if self.mode == CONSTANT.VERSION.KAIZO then
+		-- 	for i = 2, 6 do
+		-- 		utils.killPokemon(i)
+		-- 	end
+		-- end
 
 		self.checkHeldItems()
 
 		if not Battle.isWildEncounter then
-			self.trackBattle = false
 			return
 		end
-
-		self.trackBattle = true
 
 		self.checkCatchability()
 		self.checkXPAbility()
 
-		if not self.allowCatch then
-			memory.write_u32_le(0x08250902, 0x00000000) -- Set ball multipliers as 0 (Still allows masterball, no fix for that yet)
+		self.startedWithoutItem = {}
+		for i = 1, 6 do
+			local pokemon = Tracker.getPokemon(i, true)
+			if pokemon ~= nil then
+				self.startedWithoutItem[i] = pokemon.heldItem == 0
+			end
 		end
+
+		if not self.allowCatch then
+			Memory.writedword(0x08250902, 0x00000000) -- Set ball multipliers as 0 (Still allows masterball, no fix for that yet)
+		end
+
+		if self.mustBeSlave then
+			utils.setPokemonTag(1, CONSTANT.TAGS.SLAVE)
+		elseif self.mustPivot then
+			utils.setPokemonTag(1, CONSTANT.TAGS.MUST_BE_NEW_MAIN)
+		end
+	end
+
+	function self.handleNonTagCatch(caughtIndex)
+		Utils.printDebug("Handle non tag")
+		if self.mode >= CONSTANT.VERSION.KAIZO then
+			-- Ask if new main or slave
+			Utils.printDebug("Should ask if new main or slave")
+			client.pause()
+		end
+	end
+
+	function self.replaceMain(newMain)
+		utils.swapPokemon(1, newMain)
+		utils.killPokemon(newMain)
+
+		utils.setPokemonTag(1, CONSTANT.TAGS.NO_TAG)
+	end
+
+	self.handlePokemonTagFunctions = {
+		[CONSTANT.TAGS.NO_TAG] = self.handleNonTagCatch,
+		[CONSTANT.TAGS.SLAVE] = utils.killPokemon,
+		[CONSTANT.TAGS.MUST_BE_NEW_MAIN] = self.replaceMain,
+	}
+
+	function self.handlePokemonTag(pokemon)
+		local tag = utils.getPokemonTag(pokemon)
+		local func = self.handlePokemonTagFunctions[tag]
+		if func == nil then
+			return
+		end
+
+		func(pokemon)
+	end
+
+	function self.disallowLeavingArea()
+		Utils.printDebug("Not allowed to leave area (not implemented)")
+		self.allowedToLeaveArea = false
 	end
 
 	-- Executed after a battle ends, and only once per battle
 	function self.afterBattleEnds()
+		local tutorial_flag = Utils.getbits(Memory.readdword(GameSettings.gBattleTypeFlags), 9, 1) == 1
+		if tutorial_flag then
+			return
+		end
+
 		self.allowXP = true
 		self.allowCatch = true
-		memory.write_u32_le(0x08250902, 0x0F0A0F14) -- Set ball multipliers back to normal
+		Memory.writedword(0x08250902, 0x0F0A0F14) -- Set ball multipliers back to normal
 
-		local mainPokemon = Tracker.getPokemon(1, true)
-		if self.highestLevel < mainPokemon.level then
-			self.highestLevel = mainPokemon.level
-		end
+		-- local mainPokemon = Tracker.getPokemon(1, true)
+		-- if self.highestLevel < mainPokemon.level then
+		-- 	self.highestLevel = mainPokemon.level
+		-- end
 
 		-- Check if any pokémon has died
 		-- Probably unnecesary here
 
-		if not self.trackBattle then
+		local battleFlags = Memory.readdword(GameSettings.gBattleTypeFlags)
+		local isWildEncounter = Utils.getbits(battleFlags, 3, 1) == 0
+
+		if not isWildEncounter then
 			return
 		end
 
@@ -543,18 +532,69 @@ local function IronMONEnforcer()
 		local area = self.getAreaId()
 		self.hasMadeDecisionPerEncounterArea[area] = true
 
+		-- BattleStatus [0 = In battle, 1 = Won the match, 2 = Lost the match, 4 = Fled, 7 = Caught]
+		local battleOutcome = Memory.readbyte(GameSettings.gBattleOutcome) -- For current or the last battle (gBattleOutcome isn't cleared when a battle ends)
+		if battleOutcome == 2 then
+			-- Player lost, loser
+			return
+		end
+
 		-- Pokémon was caught
-		if memory.read_u8(0x02023E8A) == 0x07 then
-			self.caughtPokemonCount = self.caughtPokemonCount + 1
+		if battleOutcome == 7 and (self.mustPivot or self.mustBeSlave) then
+			-- 	self.caughtPokemonCount = self.caughtPokemonCount + 1
+			local caughtPokemon = Tracker.getPokemon(1, false)
+			local caughtAsParty = utils.findPartyPokemon(caughtPokemon)
+			if caughtAsParty == nil then
+				Utils.printDebug("Unable to find caught pokemon in party")
+				return
+			end
+
+			utils.setPokemonTag(
+				caughtAsParty,
+				(self.mustPivot == true and CONSTANT.TAGS.MUST_BE_NEW_MAIN)
+					or (self.mustBeSlave and CONSTANT.TAGS.SLAVE)
+					or CONSTANT.TAGS.NO_TAG
+			)
+
+			self.handlePokemonTag(caughtAsParty)
+
+			self.mustPivot = false
+			self.mustBeSlave = false
+			-- print(caughtPokemon)
+			return
+		end
+
+		-- We did not catch that wild
+		-- Has any party pokemon gained an item?
+		for index, startedWithout in pairs(self.startedWithoutItem) do
+			local pokemon = Tracker.getPokemon(index, true)
+			local hasItem = pokemon.heldItem ~= 0
+			if hasItem and startedWithout then
+				-- Got item from stealing
+				-- Remove it as we did not catch it
+				utils.setPokemonItem(index, 0)
+			end
+		end
+
+		-- Player fled, only killing from here on out
+		if battleOutcome == 4 then
+			return
+		end
+
+		if self.mode >= CONSTANT.VERSION.KAIZO then
+			-- Killed wild pokémon when not allowed
+			self.mustPivot = true
+			self.disallowLeavingArea()
 		end
 	end
 
 	function self.enforceOptions()
-		local saveBlock2 = memory.read_u32_le(0x0300500C) -- Save Block 2 (DMA Protected)
+		local saveBlock2 = Memory.readdword(GameSettings.gSaveBlock2ptr)
 
-		memory.write_u8(saveBlock2 + 0x13, 1)
+		Memory.writebyte(saveBlock2 + 0x13, 1)
 
-		local options = memory.read_u16_le(saveBlock2 + 0x14)
+		local options = Memory.readword(saveBlock2 + 0x14)
+
 		local textSpeed = Utils.getbits(options, 0, 2)
 		local frameType = Utils.getbits(options, 3, 5)
 		local sound = Utils.getbits(options, 8, 1)
@@ -563,19 +603,78 @@ local function IronMONEnforcer()
 		local mapZoom = Utils.getbits(options, 11, 1)
 
 		-- Battle style forced to "SET"
-		if self.mode >= VERSION.ULTIMATE then
+		if self.mode >= CONSTANT.VERSION.ULTIMATE then
 			battleStyle = 1
 		end
 
-		options = 0
-		options = options | textSpeed
-		options = options | (frameType << 3)
-		options = options | (sound << 8)
-		options = options | (battleStyle << 9)
-		options = options | (battleSceneOff << 10)
-		options = options | (mapZoom << 11)
+		textSpeed = 2
+		-- battleSceneOff = 1
 
-		memory.write_u16_le(saveBlock2 + 0x14, options)
+		options = 0
+		options = Utils.bit_or(options, textSpeed)
+		options = Utils.bit_or(options, Utils.bit_lshift(frameType, 3))
+		options = Utils.bit_or(options, Utils.bit_lshift(sound, 8))
+		options = Utils.bit_or(options, Utils.bit_lshift(battleStyle, 9))
+		options = Utils.bit_or(options, Utils.bit_lshift(battleSceneOff, 10))
+		options = Utils.bit_or(options, Utils.bit_lshift(mapZoom, 11))
+
+		Memory.writeword(saveBlock2 + 0x14, options)
+	end
+
+	function self.rekillPokemon()
+		for i = 1, 6 do
+			local tag = utils.getPokemonTag(i)
+			local pokemon = Tracker.getPokemon(i, true)
+			if pokemon ~= nil and (tag == CONSTANT.TAGS.DEAD or tag == CONSTANT.TAGS.SLAVE or pokemon.curHP == 0) then
+				utils.killPokemon(i)
+			end
+		end
+	end
+
+	function self.resetVsSeeker()
+		local saveBlock1Addr = Utils.getSaveBlock1Addr()
+
+		Memory.writeword(saveBlock1Addr + 0x638, 0)
+	end
+
+	-- Need to test so that it doesn't completely disable them
+	function self.resetRenewableHiddenItemsCounter()
+		local saveBlock1Addr = Utils.getSaveBlock1Addr()
+
+		Memory.writebyte(saveBlock1Addr + GameSettings.gameVarsOffset + 0x23, 0)
+	end
+
+	function self.isTMAllowed(tmID)
+		local flag = CONSTANT.TM_FLAGS[tmID]
+		local quantity = utils.getBagItemCount(tmID + CONSTANT.TM_START)
+
+		if flag == nil then
+			return quantity == 0
+		end
+
+		if self.hasUsedTM[tmID] then
+			return false
+		end
+
+		if quantity == 0 then
+			if utils.getFlag(flag) then
+				self.hasUsedTM[tmID] = true
+				return false
+			end
+
+			return true
+		end
+
+		return utils.getFlag(flag)
+	end
+
+	function self.checkTMs()
+		-- Currently just deletes all TMs that aren't allowed
+		for tmID = 1, CONSTANT.TM_COUNT do
+			if not self.isTMAllowed(tmID) then
+				utils.setBagItemCount(tmID + CONSTANT.TM_START, 0)
+			end
+		end
 	end
 
 	-- Executed once every 30 frames, after most data from game memory is read in
@@ -587,25 +686,113 @@ local function IronMONEnforcer()
 		self.moveContraband()
 
 		-- ReKill already dead Pokémon
-		for i = 1, 6 do
-			local tags = self.getPokemonTags(i)
-			local pokemon = Tracker.getPokemon(i, true)
-			if pokemon ~= nil and (tags.isDead or pokemon.hp == 0) then
-				self.killPokemon(i)
-			end
+		self.rekillPokemon()
+
+		self.resetVsSeeker()
+		self.resetRenewableHiddenItemsCounter()
+
+		-- Check if gained Unallowed TMs
+		if self.mode >= CONSTANT.VERSION.ULTIMATE then
+			self.checkTMs()
 		end
 	end
+
+	StreamerScreen.openPokemonPickerWindow = function(iconButton, initPokemonID)
+		if iconButton == nil then
+			return
+		end
+
+		if not PokemonData.isValid(initPokemonID) then
+			initPokemonID = Utils.randomPokemonID()
+		end
+
+		local form = Utils.createBizhawkForm(Resources.StreamerScreen.PromptChooseFavoriteTitle, 330, 145)
+
+		local allPokemon = PokemonData.namesToList()
+		if self.mode == CONSTANT.VERSION.KAIZO then
+			for pokemonID, _ in pairs(allPokemon) do
+				if pokemonID >= 252 then
+					pokemonID = pokemonID + 25
+				end
+
+				if
+					PokemonData.Pokemon[pokemonID]
+					and PokemonData.Pokemon[pokemonID].bst ~= nil
+					and PokemonData.Pokemon[pokemonID].bst >= 600
+				then
+					allPokemon[pokemonID] = nil
+				end
+			end
+		end
+
+		if utils.hasLegendaryFavorite() then
+			for pokemonID, _ in pairs(self.legendaries) do
+				allPokemon[pokemonID] = nil
+			end
+		end
+
+		forms.label(form, Resources.StreamerScreen.PromptChooseFavoriteDesc, 24, 10, 300, 20)
+		local pokedexDropdown = forms.dropdown(form, { ["Init"] = "Loading Pokedex" }, 50, 30, 145, 30)
+		forms.setdropdownitems(pokedexDropdown, allPokemon, true) -- true = alphabetize the list
+		forms.setproperty(pokedexDropdown, "AutoCompleteSource", "ListItems")
+		forms.setproperty(pokedexDropdown, "AutoCompleteMode", "Append")
+		forms.settext(pokedexDropdown, PokemonData.Pokemon[initPokemonID].name)
+
+		forms.button(form, Resources.AllScreens.Save, function()
+			local optionSelected = forms.gettext(pokedexDropdown)
+			iconButton.pokemonID = PokemonData.getIdFromName(optionSelected) or 0
+
+			StreamerScreen.saveFavorites()
+			Program.redraw(true)
+
+			Utils.closeBizhawkForm(form)
+		end, 200, 29)
+
+		forms.button(form, Resources.AllScreens.Cancel, function()
+			Utils.closeBizhawkForm(form)
+		end, 120, 69)
+	end
+
+	-- Override random balls (For favorite clause & Legenday clause)
+	TrackerScreen.randomlyChooseBall = function()
+		local validIndexes = {}
+		local validPokemon = {
+			Memory.readword(CONSTANT.STARTER_BASE_OFFSET),
+			Memory.readword(CONSTANT.STARTER_BASE_OFFSET + CONSTANT.STARTER2_BASE_OFFSET),
+			Memory.readword(CONSTANT.STARTER_BASE_OFFSET + CONSTANT.STARTER3_BASE_OFFSET),
+		}
+
+		for i = 1, 3 do
+			local pokemonID = validPokemon[i]
+			if self.isPokemonIDLegal(pokemonID) then
+				validIndexes[#validIndexes + 1] = i
+			end
+		end
+
+		local favorites = {}
+		for index, pokemonID in pairs(validPokemon) do
+			if
+				utils.isFavorite(pokemonID)
+				and not (self.mode == CONSTANT.VERSION.KAIZO and PokemonData.Pokemon[pokemonID].bstCalculated >= 600)
+			then
+				favorites[#favorites + 1] = index
+			end
+		end
+
+		if #favorites ~= 0 then
+			validIndexes = favorites
+		end
+
+		local index = math.random(#validIndexes)
+		TrackerScreen.PokeBalls.chosenBall = validIndexes[index]
+
+		return TrackerScreen.PokeBalls.chosenBall
+	end
+
+	TrackerScreen.PokeBalls.chosenBall = -1
+	TrackerScreen.randomlyChooseBall()
 
 	return self
 end
 
--- Override random balls (For favorite clause)
--- TrackerScreen.randomlyChooseBall = function ()
---   local validPokemon = {}
---
---
--- 	-- TrackerScreen.PokeBalls.chosenBall = math.random(3)
--- 	return TrackerScreen.PokeBalls.chosenBall
--- end
-
-return IronMONEnforcer
+return IronmonEnforcer
