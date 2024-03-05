@@ -372,15 +372,15 @@ local function IronMONEnforcer()
 		self.oldShowOnNewGameScreen = Options["Show on new game screen"]
 		Options["Show on new game screen"] = true
 
-    self.oldShowRandomBallPicker = Options["Show random ball picker"]
-    Options["Show random ball picker"] = true
+		self.oldShowRandomBallPicker = Options["Show random ball picker"]
+		Options["Show random ball picker"] = true
 	end
 
 	-- Executed only once: When the extension is disabled by the user, necessary to undo any customizations, if able
 	function self.unload()
 		Options["Show on new game screen"] = self.oldShowOnNewGameScreen
-	  Options["Show random ball picker"] = self.oldShowRandomBallPicker
- end
+		Options["Show random ball picker"] = self.oldShowRandomBallPicker
+	end
 
 	-- Executed once every 30 frames, after any battle related data from game memory is read in
 	function self.afterBattleDataUpdate()
@@ -389,7 +389,7 @@ local function IronMONEnforcer()
 		end
 
 		-- TODO: Check if has died
-    -- Maybe not needed
+		-- Maybe not needed
 	end
 
 	function self.checkCatchability()
@@ -533,7 +533,7 @@ local function IronMONEnforcer()
 		end
 
 		-- Check if any pokémon has died
-    -- Probably unnecesary here
+		-- Probably unnecesary here
 
 		if not self.trackBattle then
 			return
@@ -599,7 +599,7 @@ local function IronMONEnforcer()
 	return self
 end
 
--- Override random balls (For favorite clause) 
+-- Override random balls (For favorite clause)
 -- TrackerScreen.randomlyChooseBall = function ()
 --   local validPokemon = {}
 --
