@@ -1,34 +1,42 @@
 local customCodeFolder = FileManager.getCustomFolderPath() .. "\\IronmonEnforcer\\"
 local utils = dofile(customCodeFolder .. "Utils.lua")
 local CONSTANT = dofile(customCodeFolder .. "Constants.lua")
-local CustomDisplay = dofile(customCodeFolder .. "Display.lua")
+local SelectionScreen = dofile(customCodeFolder .. "Display.lua")
 
 local function IronmonEnforcer()
-	-- Define descriptive attributes of the custom extension that are displayed on the Tracker settings
+	-- Constants/Plugin info
 	local self = {}
 	self.version = "0.3"
 	self.name = "Ironmon Enforcer"
 	self.author = "Sticke"
 	self.description = "Enforces the Ironmon rules depending on which version you want to play"
 	self.github = "Sticke0/IronmonEnforcer"
-	self.url = string.format("https://github.com/%s", self.github or "") -- Remove this attribute if no host website available for this extension
+	self.url = string.format("https://github.com/%s", self.github or "")
 
-	self.highestLevel = 0
-	self.allowedGrind = 0
-	self.allowXP = true
-	self.allowCatch = true
-	self.hasMadeDecisionPerEncounterArea = {}
-	self.caughtPokemonCount = 0
-	self.hasHMSlave = false
-	self.shouldTrackBattle = false
-	self.hasUsedTM = {}
-	self.mustPivot = false
-	self.allowedToLeaveArea = true
-	self.startedWithoutItem = false
-	self.mustBeSlave = false
-
+	-- Options
 	self.mode = CONSTANT.VERSION.KAIZO
 
+	-- Variables
+	self.allowXP = true
+	self.allowCatch = true
+	self.shouldTrackBattle = false
+	self.startedWithoutItem = {}
+	self.mustBeSlave = false
+	-- self.highestLevel = 0
+	-- self.allowedGrind = 0
+
+	-- Variables to save per attempt/game
+	-- self.lavenderTownState = 0
+	self.lastArea = -1
+	self.visitedAreas = {}
+	self.hasMadeDecisionPerEncounterArea = {}
+	self.mustPivot = false
+	self.allowedToLeaveArea = true
+	self.hasUsedTM = {}
+	self.hasHMSlave = false -- Could/should be made into a function
+	-- self.caughtPokemonCount = 0
+
+	-- Other "Variables"
 	self.isAllowedToHoldItem = {
 		function(itemID)
 			return CONSTANT.BANNED_ITEMS[CONSTANT.VERSION.STANDARD][itemID] ~= true
@@ -112,9 +120,19 @@ local function IronmonEnforcer()
 
 		self.replaceShops()
 
-		if self.mode >= CONSTANT.VERSION.KAIZO then
-			self.replaceHealingItemsFieldUse()
+		-- Ultimate and onwards
+		if self.mode < CONSTANT.VERSION.ULTIMATE then
+			return
 		end
+
+		self.replaceHMMovePP()
+
+		-- Kaizo and onwards
+		if self.mode < CONSTANT.VERSION.KAIZO then
+			return
+		end
+
+		self.replaceHealingItemsFieldUse()
 	end
 
 	-- Executed only once: When the extension is disabled by the user, necessary to undo any customizations, if able
@@ -144,6 +162,13 @@ local function IronmonEnforcer()
 				CONSTANT.gItems + CONSTANT.ITEMSTRUCT_SIZE * itemID + CONSTANT.ITEMSTRUCT_FIELD_USE_FUNCTION_OFFSET,
 				CONSTANT.FieldUseFunc_Medicine
 			)
+		end
+	end
+
+	function self.replaceHMMovePP()
+		for _, moveID in pairs(CONSTANT.HM_MOVES) do
+			local address = CONSTANT.gBattleMoves + CONSTANT.MOVESTRUCT_SIZE * moveID + CONSTANT.MOVE_PP_OFFSET
+			Memory.writebyte(address, 0)
 		end
 	end
 
@@ -223,7 +248,13 @@ local function IronmonEnforcer()
 	end
 
 	function self.getAreaId()
-		return Battle.CurrentRoute.encounterArea .. "-" .. Program.GameData.mapId
+    local mapId = Program.GameData.mapId
+    mapId = CONSTANT.SAME_AREA[mapId] or mapId
+		return Battle.CurrentRoute.encounterArea .. "-" .. mapId
+	end
+
+	function self.isGym()
+		return Memory.readword(GameSettings.gMapHeader + 0x1B) == 1 -- 0x1B: battleType
 	end
 
 	-- Executed once every 30 frames, after any battle related data from game memory is read in
@@ -405,9 +436,9 @@ local function IronmonEnforcer()
 		for i = 1, self.mode do
 			for itemID, _ in pairs(CONSTANT.BANNED_ITEMS[i]) do
 				-- bannedItems[#bannedItems + 1] = itemID
-				-- local ammount = self.getBagItemCount(itemID)
-				local ammount = utils.getBagItemCount(itemID)
-				if ammount > 0 then
+				-- local amount = self.getBagItemCount(itemID)
+				local amount = utils.getBagItemCount(itemID)
+				if amount > 0 then
 					utils.moveItem(itemID) -- Moves to PC
 				end
 			end
@@ -415,8 +446,8 @@ local function IronmonEnforcer()
 
 		-- for i = 1, #bannedItems do
 		-- 	local itemID = bannedItems[i]
-		-- 	local ammount = self.getBagItemCount(itemID)
-		-- 	if ammount > 0 then
+		-- 	local amount = self.getBagItemCount(itemID)
+		-- 	if amount > 0 then
 		-- 		self.moveItem(itemID) -- Moves to PC
 		-- 	end
 		-- end
@@ -466,11 +497,57 @@ local function IronmonEnforcer()
 	end
 
 	function self.handleNonTagCatch(caughtIndex)
-		Utils.printDebug("Handle non tag")
 		if self.mode >= CONSTANT.VERSION.KAIZO then
 			-- Ask if new main or slave
-			Utils.printDebug("Should ask if new main or slave")
+			-- Would be better with emu.yield, but currently broken
 			client.pause()
+
+			-- This is nice and all, but as emu.yield is broken, should probably just use a form
+			local chosenOption = nil
+			SelectionScreen.Question = "Is this your new Main?"
+			SelectionScreen.Callback = function(option)
+				chosenOption = option
+				client.unpause()
+			end
+
+			local x, y, w, h, lineHeight = 20, 15, 300, 150, 20
+			local form = Utils.createBizhawkForm("Please select an option", w, h, 80, 20)
+
+			forms.label(form, "Will this be your new main?", x, y, w - 40, lineHeight)
+			y = y + 20
+
+			forms.button(form, "Yes", function()
+				-- chosenOption = true
+				self.replaceMain(caughtIndex)
+				Utils.closeBizhawkForm(form)
+				client.unpause()
+			end, x + 70, y)
+
+			forms.button(form, "No", function()
+				-- chosenOption = false
+				utils.killPokemon(caughtIndex)
+				Utils.closeBizhawkForm(form)
+				client.unpause()
+			end, x + 170, y)
+
+			-- Program.changeScreenView(SelectionScreen)
+
+			-- while chosenOption == nil do
+			-- local input = joypad.get()
+
+			-- joypad.set{A=false, B=false, Down=false, L=false, Left=false, R=false, Right=false, Select=false, Start=false, Up=false}
+			-- emu.frameadvance()
+			-- emu.yield()
+			-- Program.currentScreen.drawScreen()
+			-- end
+
+			-- print("Chosen option", chosenOption)
+			--
+			-- Program.changeScreenView(previousScreen or SingleExtensionScreen)
+			-- previousScreen = nil
+
+			-- Should be in a loop
+			-- Program.currentScreen.drawScreen()
 		end
 	end
 
@@ -495,6 +572,100 @@ local function IronmonEnforcer()
 		end
 
 		func(pokemon)
+	end
+
+	function self.isWarpDisabled(id)
+		local eventsPointer = Memory.readdword(Constants.gMapHeader + 0x04)
+		local warpCount = Memory.readbyte(eventsPointer + 0x01)
+
+		if id > warpCount then
+			return true -- Does not exist
+		end
+
+		local warpEvents = Memory.readdowrd(eventsPointer + 0x08)
+		local warp_x = memory.read_s16_le(warpEvents + 0x8 * (id - 1))
+		local warp_y = memory.read_s16_le(warpEvents + 0x8 * (id - 1))
+
+		return warp_x <= -10 and warp_y <= -10
+	end
+
+	function self.toggleWarp(id)
+		local eventsPointer = Memory.readdword(Constants.gMapHeader + 0x04)
+		local warpCount = Memory.readbyte(eventsPointer + 0x01)
+
+		if id > warpCount then
+			return true -- Does not exist
+		end
+
+		local warpEvents = Memory.readdowrd(eventsPointer + 0x08)
+		local warp_x = memory.read_s16_le(warpEvents + CONSTANT.WARP_EVENT_SIZE * (id - 1) + CONSTANT.WARP_X_OFFSET)
+			* -10
+		local warp_y = memory.read_s16_le(warpEvents + CONSTANT.WARP_EVENT_SIZE * (id - 1) + CONSTANT.WARP_Y_OFFSET)
+			* -10
+
+		memory.write_s16_le(warpEvents + CONSTANT.WARP_EVENT_SIZE * (id - 1) + CONSTANT.WARP_X_OFFSET, warp_x)
+		memory.write_s16_le(warpEvents + CONSTANT.WARP_EVENT_SIZE * (id - 1) + CONSTANT.WARP_Y_OFFSET, warp_y)
+	end
+
+	function self.disableDungeonWarps(dungeon)
+		for warp, map in dungeon do
+			if self.visitedAreas[map] and not self.isWarpDisabled(warp) then
+				self.toggleWarp(warp)
+			end
+		end
+	end
+
+	function self.reEnableAllWarps()
+		local eventsPointer = Memory.readdword(Constants.gMapHeader + 0x04)
+		local warpCount = Memory.readbyte(eventsPointer + 0x01)
+
+		for id = 1, warpCount do
+			local warpEvents = Memory.readdowrd(eventsPointer + 0x08)
+			local warp_x = memory.read_s16_le(warpEvents + CONSTANT.WARP_EVENT_SIZE * (id - 1) + CONSTANT.WARP_X_OFFSET)
+				* -10
+			local warp_y = memory.read_s16_le(warpEvents + CONSTANT.WARP_EVENT_SIZE * (id - 1) + CONSTANT.WARP_Y_OFFSET)
+				* -10
+
+			if not (warp_x <= -10 and warp_y <= -10) then
+				memory.write_s16_le(warpEvents + CONSTANT.WARP_EVENT_SIZE * (id - 1) + CONSTANT.WARP_X_OFFSET, warp_x)
+				memory.write_s16_le(warpEvents + CONSTANT.WARP_EVENT_SIZE * (id - 1) + CONSTANT.WARP_Y_OFFSET, warp_y)
+			end
+		end
+	end
+
+	function self.fixWarps()
+		local mapId = Program.GameData.mapId
+
+		local dungeon = CONSTANT.DISABLE_DUNGEON_WARP[mapId]
+		if dungeon ~= nil then
+			self.disableDungeonWarps(dungeon)
+			return
+		end
+
+		local silphCoDungeon = CONSTANT.SILPH_CO[utils.getFlag(CONSTANT.BEAT_SILPH_CO)][mapId]
+		if silphCoDungeon ~= nil then
+			self.disableDungeonWarps(dungeon)
+			return
+		end
+
+		local rocketHideoutDungeon = CONSTANT.TEAM_ROCKET_HIDEOUT[utils.getBagItemCount(CONSTANT.SILPH_SCOPE)][mapId]
+		if rocketHideoutDungeon ~= nil then
+			self.disableDungeonWarps(rocketHideoutDungeon)
+			return
+		end
+
+		local lavenderTownState = 0
+		if utils.getBagItemCount(CONSTANT.SILPH_SCOPE) > 0 then
+			lavenderTownState = 2
+		elseif utils.getFlag(CONSTANT.LAVENDER_TOWN_RIVAL) then
+			lavenderTownState = 1
+		end
+
+		local pokemonTower = CONSTANT.POKEMON_TOWER[lavenderTownState][mapId]
+		if pokemonTower ~= nil then
+			self.disableDungeonWarps(pokemonTower)
+			return
+		end
 	end
 
 	function self.disallowLeavingArea()
@@ -540,7 +711,7 @@ local function IronmonEnforcer()
 		end
 
 		-- Pokémon was caught
-		if battleOutcome == 7 and (self.mustPivot or self.mustBeSlave) then
+		if battleOutcome == 7 then
 			-- 	self.caughtPokemonCount = self.caughtPokemonCount + 1
 			local caughtPokemon = Tracker.getPokemon(1, false)
 			local caughtAsParty = utils.findPartyPokemon(caughtPokemon)
@@ -677,8 +848,24 @@ local function IronmonEnforcer()
 		end
 	end
 
+	function self.onMapUpdate(oldId, newId)
+		self.visitedAreas[newId] = true
+		-- self.restoreWarps()
+		self.fixWarps()
+	end
+
+	function self.updateMap()
+		local currentMap = Program.GameData.mapId
+		if currentMap ~= self.lastArea then
+			self.onMapUpdate(self.lastArea, currentMap)
+			self.lastArea = currentMap
+		end
+	end
+
 	-- Executed once every 30 frames, after most data from game memory is read in
 	function self.afterProgramDataUpdate()
+		self.updateMap()
+
 		self.enforceOptions()
 		self.checkHeldItems()
 

@@ -156,6 +156,7 @@ local function utils()
 			end
 
 			self.setPokemonTag(i, CONSTANT.TAGS.DEAD)
+      self.setPokemonItem(i, 0)
 		end
 	end
 
@@ -229,7 +230,7 @@ local function utils()
 		return Memory.readbyte(CONSTANT.gItems + CONSTANT.ITEMSTRUCT_SIZE * itemID + CONSTANT.ITEMSTRUCT_POCKET_OFFSET)
 	end
 
-	function self.setBagItemCount(itemID, ammount)
+	function self.setBagItemCount(itemID, amount)
 		local key = Utils.getEncryptionKey(2) -- Want a 16-bit key
 
 		local pocket = self.getItemPocket(itemID) - 1
@@ -242,10 +243,10 @@ local function utils()
 			self.setBagItemCount(CONSTANT.ITEM_BERRY_POUCH, 1)
 		end
 
-		local clear = ammount == 0
+		local clear = amount == 0
 
 		if key ~= nil then
-			ammount = Utils.bit_xor(ammount, key)
+			amount = Utils.bit_xor(ammount, key)
 		end
 
 		for i = 0, (size - 1) do
@@ -262,19 +263,19 @@ local function utils()
 					itemID = 0
 				end
 
-				-- itemid_and_quantity = itemID + (ammount << 16)
-				itemid_and_quantity = itemID + Utils.bit_lshift(ammount, 16)
+				-- itemid_and_quantity = itemID + (amount << 16)
+				itemid_and_quantity = itemID + Utils.bit_lshift(amount, 16)
 				Memory.writedword(address + i * 0x4, itemid_and_quantity)
 				break
 			end
 		end
 	end
 
-	function self.setPCItemCount(itemID, ammount)
+	function self.setPCItemCount(itemID, amount)
 		local saveBlock1Addr = Utils.getSaveBlock1Addr()
 		local address = saveBlock1Addr + 0x298
 		local size = 30
-		local clear = ammount == 0
+		local clear = amount == 0
 
 		for i = 0, (size - 1) do
 			local itemid_and_quantity = Memory.readdword(address + i * 0x4)
@@ -286,16 +287,16 @@ local function utils()
 					itemID = 0
 				end
 
-				-- itemid_and_quantity = itemID + (ammount << 16)
-				itemid_and_quantity = itemID + Utils.bit_lshift(ammount, 16)
+				-- itemid_and_quantity = itemID + (amount << 16)
+				itemid_and_quantity = itemID + Utils.bit_lshift(amount, 16)
 				Memory.writedword(address + i * 0x4, itemid_and_quantity)
 				break
 			end
 		end
 	end
 
-	function self.addItemToBag(itemID, ammount)
-		local total = self.getBagItemCount(itemID) + ammount
+	function self.addItemToBag(itemID, amount)
+		local total = self.getBagItemCount(itemID) + amount
 		if total < 0 then
 			total = 0
 		end
@@ -303,8 +304,8 @@ local function utils()
 		self.setBagItemCount(itemID, total)
 	end
 
-	function self.addItemToPC(itemID, ammount)
-		local total = self.getPCItemCount(itemID) + ammount
+	function self.addItemToPC(itemID, amount)
+		local total = self.getPCItemCount(itemID) + amount
 		if total < 0 then
 			total = 0
 		end
